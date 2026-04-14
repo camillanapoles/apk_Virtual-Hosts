@@ -151,7 +151,8 @@ cmd_list() {
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 COMMAND="${1:-help}"
-shift 2>/dev/null || true
+# Shift the command name out of $@; if no arguments were given, shift is a no-op.
+if [ $# -gt 0 ]; then shift; fi
 
 case "$COMMAND" in
   build)          cmd_build "$@" ;;
