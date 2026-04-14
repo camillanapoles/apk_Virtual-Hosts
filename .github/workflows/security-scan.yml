@@ -1,0 +1,120 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# WORKFLOW: Security Scan
+# BPMN Phase: 5.3 (Security Scan of Pipeline) + 2.1 (Vulnerability Scan)
+#
+# Runs:
+#   • CodeQL static analysis on every push/PR to main
+#   • Dependency-review on every pull-request (blocks vulnerable deps)
+#   • Weekly scheduled re-scan for newly disclosed CVEs
+#
+# Actions selected via BPMN safety-scoring (score ≥ 2.5, SHA-pinned):
+#   actions/checkout@v4                        – score 3.0  (GitHub Official)
+#   github/codeql-action/init@v3               – score 3.0  (GitHub Official)
+#   github/codeql-action/autobuild@v3          – score 3.0  (GitHub Official)
+#   github/codeql-action/analyze@v3            – score 3.0  (GitHub Official)
+#   actions/dependency-review-action@v4        – score 3.0  (GitHub Official)
+# ─────────────────────────────────────────────────────────────────────────────
+name: Security Scan
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  schedule:
+    # Every Monday at 08:00 UTC — weekly CVE re-scan (BPMN: Loop of Continuous Improvement)
+    - cron: '0 8 * * 1'
+
+# Minimal permission set (Phase 3 – Permissions Scoping)
+permissions:
+  contents: read
+  security-events: write  # required to upload SARIF results
+  actions: read           # required by CodeQL for private repos
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Job 1: CodeQL static analysis ─────────────────────────────────────────
+  codeql:
+    name: CodeQL — Java
+    runs-on: ubuntu-latest
+
+    steps:
+      # SHA pin: actions/checkout v4.2.2
+      - name: Checkout source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      # SHA pin: actions/setup-java v4
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      # SHA pin: gradle/actions/setup-gradle v4
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with:
+          gradle-version: wrapper
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      # SHA pin: github/codeql-action v3 (latest on releases/v3 branch)
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@5c8a8a642e79153f5d047b10ec1cba1d1cc65699
+        with:
+          languages: java
+          # Query suites: security-and-quality covers OWASP Top-10 + CWE Top-25
+          queries: security-and-quality
+
+      # Autobuild compiles the project so CodeQL can trace the build graph.
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@5c8a8a642e79153f5d047b10ec1cba1d1cc65699
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@5c8a8a642e79153f5d047b10ec1cba1d1cc65699
+        with:
+          category: /language:java
+
+  # ── Job 2: Dependency Review (PR only) ────────────────────────────────────
+  # Blocks PRs that introduce dependencies with known vulnerabilities.
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      # SHA pin: actions/checkout v4.2.2
+      - name: Checkout source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      # SHA pin: actions/dependency-review-action v4.9.0
+      - name: Dependency Review
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48
+        with:
+          # Fail on CRITICAL and HIGH severity vulnerabilities
+          fail-on-severity: high
+          # Allow GPL-3.0 (project licence) and compatible licences
+          allow-licenses: >-
+            GPL-3.0,
+            GPL-2.0,
+            LGPL-2.1,
+            LGPL-3.0,
+            Apache-2.0,
+            MIT,
+            BSD-2-Clause,
+            BSD-3-Clause,
+            EPL-1.0,
+            EPL-2.0,
+            MPL-2.0,
+            ISC,
+            CC0-1.0,
+            Unlicense
