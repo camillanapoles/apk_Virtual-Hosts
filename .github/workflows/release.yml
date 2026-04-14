@@ -1,0 +1,150 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# WORKFLOW: Release
+# BPMN Phase: 4 (Transformation) → Stage: production
+#
+# Triggered when a version tag (v*) is pushed.
+# Builds the GitHub-flavour RELEASE APK (no Google Play services required),
+# then publishes it as a GitHub Release with the APK attached.
+#
+# NOTE – Signing:
+#   A signed release requires the following repository secrets to be set
+#   (Settings → Secrets and variables → Actions):
+#     KEYSTORE_BASE64   – base64-encoded .jks keystore file
+#     KEY_ALIAS         – key alias inside the keystore
+#     KEY_PASSWORD      – key password
+#     STORE_PASSWORD    – keystore password
+#   Without these secrets the workflow uploads an unsigned APK and emits a
+#   warning; this is intentional so the workflow is useful even without a
+#   signing setup.
+#
+# Actions selected via BPMN safety-scoring (score ≥ 2.0, SHA-pinned):
+#   actions/checkout@v4             – score 3.0  (GitHub Official)
+#   actions/setup-java@v4           – score 3.0  (GitHub Official)
+#   gradle/actions/setup-gradle@v4  – score 2.8  (Gradle Official)
+#   actions/upload-artifact@v4      – score 3.0  (GitHub Official)
+#   softprops/action-gh-release@v2  – score 2.2  (Community, >5K★, active)
+# ─────────────────────────────────────────────────────────────────────────────
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'  # matches v1.2.3, v2.0.0-rc1, etc.
+
+# Minimal permission set (Phase 3 – Permissions Scoping)
+permissions:
+  contents: write   # required to create/update GitHub Releases
+
+jobs:
+  release:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────
+      # SHA pin: actions/checkout v4.2.2
+      - name: Checkout source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0   # full history so changelog generation works
+
+      # ── 2. Java toolchain ───────────────────────────────────────────────
+      # SHA pin: actions/setup-java v4
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      # ── 3. Gradle setup ─────────────────────────────────────────────────
+      # SHA pin: gradle/actions/setup-gradle v4
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with:
+          gradle-version: wrapper
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      # ── 4. Decode keystore (optional) ───────────────────────────────────
+      - name: Decode keystore
+        if: ${{ env.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > app/release.jks
+
+      # ── 5. Assemble release APK ──────────────────────────────────────────
+      # Builds the open-source (github) release variant.
+      # Signing is applied via Gradle properties when keystore secrets exist.
+      - name: Assemble release APK (github flavour)
+        env:
+          SIGNING_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+        run: |
+          if [ -f app/release.jks ]; then
+            ./gradlew assembleGithubRelease \
+              -Pandroid.injected.signing.store.file="$(pwd)/app/release.jks" \
+              -Pandroid.injected.signing.store.password="$SIGNING_STORE_PASSWORD" \
+              -Pandroid.injected.signing.key.alias="$SIGNING_KEY_ALIAS" \
+              -Pandroid.injected.signing.key.password="$SIGNING_KEY_PASSWORD" \
+              --no-daemon
+          else
+            echo "::warning::Keystore secrets not configured — building unsigned APK."
+            ./gradlew assembleGithubRelease --no-daemon
+          fi
+
+      # ── 6. Collect APKs ─────────────────────────────────────────────────
+      - name: Locate APK files
+        id: locate_apk
+        run: |
+          APK_PATH=$(find app/build/outputs/apk/github/release -name "*.apk" | head -n 1)
+          echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
+          echo "Found APK: $APK_PATH"
+
+      # ── 7. Upload build artifact ─────────────────────────────────────────
+      # SHA pin: actions/upload-artifact v4.6.2
+      - name: Upload release APK artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-apk-${{ github.ref_name }}
+          path: app/build/outputs/apk/github/release/*.apk
+          retention-days: 90
+          if-no-files-found: error
+
+      # ── 8. Generate simple changelog from git log ────────────────────────
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log "$PREV_TAG"..HEAD --oneline --no-merges)
+          else
+            CHANGELOG=$(git log HEAD --oneline --no-merges | head -20)
+          fi
+          # Write multi-line output safely
+          {
+            echo "body<<EOF"
+            echo "## Changes in ${{ github.ref_name }}"
+            echo ""
+            echo "$CHANGELOG"
+            echo ""
+            echo "---"
+            echo "_Built by GitHub Actions · [View workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})_"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # ── 9. Create GitHub Release ─────────────────────────────────────────
+      # SHA pin: softprops/action-gh-release v2.6.2
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          name: Virtual Hosts ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.body }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+          files: |
+            app/build/outputs/apk/github/release/*.apk
+          fail_on_unmatched_files: true

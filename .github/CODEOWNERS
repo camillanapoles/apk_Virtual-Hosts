@@ -1,0 +1,30 @@
+# Code Owners
+# BPMN Phase 1.5 – Security Baseline → enforce human review gates
+#
+# Each line maps a path pattern to one or more owners (GitHub
+# usernames or team slugs).  A CODEOWNER review is required before
+# any matching file can be merged.
+#
+# Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# ── Default owner for everything not matched below ────────────────────────────
+*                                 @camillanapoles
+
+# ── CI/CD pipelines (high-risk: supply-chain security) ────────────────────────
+.github/workflows/                @camillanapoles
+.github/dependabot.yml            @camillanapoles
+.github/CODEOWNERS                @camillanapoles
+
+# ── Build configuration ───────────────────────────────────────────────────────
+build.gradle                      @camillanapoles
+app/build.gradle                  @camillanapoles
+gradle.properties                 @camillanapoles
+settings.gradle                   @camillanapoles
+gradle/                           @camillanapoles
+
+# ── Security-sensitive files ──────────────────────────────────────────────────
+app/proguard-rules.pro            @camillanapoles
+SECURITY.md                       @camillanapoles
+
+# ── VPN service (core sensitive networking logic) ─────────────────────────────
+app/src/main/java/com/github/xfalcon/vhosts/vservice/   @camillanapoles

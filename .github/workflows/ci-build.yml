@@ -1,0 +1,90 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# WORKFLOW: CI – Build & Test
+# BPMN Phase: 4 (Transformation) → Stage: staging
+#
+# Triggers on every push to main/master and on all pull-requests.
+# Runs the full Gradle build for every product flavour in parallel,
+# executes unit tests, and uploads the resulting APKs as workflow artifacts.
+#
+# Actions selected via BPMN safety-scoring (score ≥ 2.0, SHA-pinned):
+#   actions/checkout@v4                       – score 3.0  (GitHub Official)
+#   actions/setup-java@v4                     – score 3.0  (GitHub Official)
+#   gradle/actions/setup-gradle@v4            – score 2.8  (Gradle Official)
+#   actions/upload-artifact@v4                – score 3.0  (GitHub Official)
+# ─────────────────────────────────────────────────────────────────────────────
+name: CI — Build & Test
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+# Minimal permission set (Phase 3 – Permissions Scoping)
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.flavor }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor:
+          - github      # open-source / F-Droid variant
+          - googleplay  # Google Play variant
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      # SHA pin: actions/checkout v4.2.2
+      - name: Checkout source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      # ── 2. Java toolchain ──────────────────────────────────────────────────
+      # Java 17 (LTS) is required by AGP 8.x even though source compat = 1.8.
+      # SHA pin: actions/setup-java v4 (latest on v4 branch)
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      # ── 3. Gradle setup & build cache ──────────────────────────────────────
+      # SHA pin: gradle/actions/setup-gradle v4 (latest on v4 branch)
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with:
+          gradle-version: wrapper
+
+      # ── 4. Grant execute permission on wrapper ──────────────────────────────
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      # ── 5. Run unit tests ──────────────────────────────────────────────────
+      - name: Unit tests (${{ matrix.flavor }})
+        run: ./gradlew test${{ matrix.flavor == 'github' && 'Github' || 'Googleplay' }}DebugUnitTest --no-daemon
+
+      # ── 6. Assemble debug APK ──────────────────────────────────────────────
+      - name: Assemble debug APK (${{ matrix.flavor }})
+        run: ./gradlew assemble${{ matrix.flavor == 'github' && 'Github' || 'Googleplay' }}Debug --no-daemon
+
+      # ── 7. Upload APK artifact ─────────────────────────────────────────────
+      # SHA pin: actions/upload-artifact v4.6.2
+      - name: Upload debug APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: apk-${{ matrix.flavor }}-debug-${{ github.sha }}
+          path: app/build/outputs/apk/${{ matrix.flavor }}/debug/*.apk
+          retention-days: 14
+          if-no-files-found: error

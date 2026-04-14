@@ -1,0 +1,50 @@
+# Dependabot configuration
+# BPMN Phase 6 – Optimization / Loop of Continuous Improvement
+#
+# Automatically opens pull-requests to keep GitHub Actions and
+# Gradle dependencies up-to-date. PRs are opened weekly so the
+# security-scan workflow can vet them before they are merged.
+#
+# Reference: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+
+updates:
+  # ── 1. GitHub Actions ─────────────────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: "UTC"
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "chore(actions)"
+    # Group all action updates into a single PR to reduce noise
+    groups:
+      github-actions-all:
+        patterns:
+          - "*"
+
+  # ── 2. Gradle (app module) ────────────────────────────────────────────────
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:30"
+      timezone: "UTC"
+    labels:
+      - dependencies
+      - gradle
+    commit-message:
+      prefix: "chore(deps)"
+    # Group non-major updates to reduce PR noise
+    groups:
+      gradle-minor-patch:
+        update-types:
+          - minor
+          - patch
